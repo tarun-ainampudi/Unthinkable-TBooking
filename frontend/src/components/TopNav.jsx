@@ -1,16 +1,19 @@
 import React from "react";
 import { Ticket, History, User } from "lucide-react";
 
-export default function TopNav({ page, setPage }) {
+export default function TopNav({ page, setPage, user, onEventsClick, onBookingsClick }) {
+  const profileLabel = user ? "Profile" : "Login";
+
   const links = [
-    { id: "events", label: "Events", icon: Ticket },
-    { id: "bookings", label: "My Bookings", icon: History },
-    { id: "profile", label: "Profile", icon: User },
+    { id: "events", label: "Events", icon: Ticket, onClick: onEventsClick || (() => setPage("events")) },
+    ...(user ? [{ id: "bookings", label: "My Bookings", icon: History, onClick: onBookingsClick || (() => setPage("bookings")) }] : []),
+    { id: "profile", label: profileLabel, icon: User, onClick: () => setPage("profile") },
   ];
+
   return (
     <header className="topnav">
       <div className="topnav-inner">
-        <button className="brand" onClick={() => setPage("events")}>
+        <button className="brand" onClick={() => (user ? setPage("events") : setPage("profile"))}>
           <span className="brand-mark">
             <Ticket size={18} strokeWidth={2.25} />
           </span>
@@ -23,7 +26,7 @@ export default function TopNav({ page, setPage }) {
             <button
               key={l.id}
               className={"topnav-link" + (page === l.id ? " is-active" : "")}
-              onClick={() => setPage(l.id)}
+              onClick={l.onClick}
             >
               <l.icon size={15} strokeWidth={2.25} />
               <span>{l.label}</span>

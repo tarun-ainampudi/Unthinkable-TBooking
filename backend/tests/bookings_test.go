@@ -10,9 +10,11 @@ import (
 
 func TestUserBookingsIncludeQrCode(t *testing.T) {
 	router := setupTestRouter()
+	token := loginTestUser(router)
 
 	bookingReq := httptest.NewRequest(http.MethodPost, "/api/bookings", strings.NewReader(`{"userId":1,"eventId":1,"seatLabels":["A5","A6"]}`))
 	bookingReq.Header.Set("Content-Type", "application/json")
+	bookingReq.Header.Set("Authorization", "Bearer "+token)
 	bookingRes := httptest.NewRecorder()
 	router.ServeHTTP(bookingRes, bookingReq)
 
@@ -21,6 +23,7 @@ func TestUserBookingsIncludeQrCode(t *testing.T) {
 	}
 
 	bookingsReq := httptest.NewRequest(http.MethodGet, "/api/users/1/bookings", nil)
+	bookingsReq.Header.Set("Authorization", "Bearer "+token)
 	bookingsRes := httptest.NewRecorder()
 	router.ServeHTTP(bookingsRes, bookingsReq)
 

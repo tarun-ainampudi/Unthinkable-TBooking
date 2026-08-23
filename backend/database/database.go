@@ -102,8 +102,10 @@ func EnsureSchema(ctx context.Context, db *pgxpool.Pool) error {
 			name TEXT NOT NULL,
 			email TEXT NOT NULL UNIQUE,
 			phone TEXT,
-			member_since TEXT
+			member_since TEXT,
+			password TEXT NOT NULL DEFAULT 'ticket123'
 		)`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS password TEXT NOT NULL DEFAULT 'ticket123'`,
 		`CREATE TABLE IF NOT EXISTS events (
 			id INTEGER PRIMARY KEY,
 			title TEXT NOT NULL,
@@ -142,10 +144,19 @@ func EnsureSchema(ctx context.Context, db *pgxpool.Pool) error {
 			CONSTRAINT fk_bookings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
 			CONSTRAINT fk_bookings_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at TIMESTAMPTZ NOT NULL,
+			revoked BOOLEAN NOT NULL DEFAULT FALSE,
+			CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 		`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS qr_code_data_url TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`,
 		`CREATE INDEX IF NOT EXISTS idx_seats_event_status ON seats(event_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_bookings_user_event ON bookings(user_id, event_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 		`ALTER TABLE seats ADD COLUMN IF NOT EXISTS held_until TIMESTAMPTZ`,
 	}
 
@@ -166,9 +177,9 @@ func SeedDB(db *pgxpool.Pool) {
 	}
 
 	if _, err := db.Exec(ctx, `
-		INSERT INTO users (id, name, email, phone, member_since) 
-		VALUES (1, 'Aarav Shah', 'aarav.shah@example.com', '+91 98765 43210', 'March 2025')
-		ON CONFLICT (id) DO NOTHING`); err != nil {
+		INSERT INTO users (id, name, email, phone, member_since, password) 
+		VALUES (1, 'Aarav Shah', 'aarav.shah@example.com', '+91 98765 43210', 'March 2025', 'ticket123')
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, phone = EXCLUDED.phone, member_since = EXCLUDED.member_since, password = EXCLUDED.password`); err != nil {
 		log.Printf("[Warn] Failed to seed default user: %v", err)
 	}
 

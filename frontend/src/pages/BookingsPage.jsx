@@ -2,8 +2,21 @@ import React, { useState } from "react";
 import { TicketX } from "lucide-react";
 import BookingRow from "../components/BookingRow";
 
-export default function BookingsPage({ bookings = [] }) {
+export default function BookingsPage({ bookings = [], user, onRequireLogin }) {
   const [tab, setTab] = useState("all");
+
+  if (!user) {
+    return (
+      <div className="page page-bookings">
+        <h1 className="page-title">My bookings</h1>
+        <div className="empty-state">
+          <TicketX size={28} strokeWidth={1.75} />
+          <p>Please log in to view your bookings.</p>
+          <button className="btn btn-primary" onClick={onRequireLogin}>Go to login</button>
+        </div>
+      </div>
+    );
+  }
 
   const filtered = bookings.filter((b) => {
     if (tab === "all") return true;

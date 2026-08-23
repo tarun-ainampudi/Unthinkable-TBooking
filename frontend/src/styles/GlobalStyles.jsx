@@ -474,7 +474,23 @@ export default function GlobalStyles() {
       .booking-code { font-family: var(--font-mono); letter-spacing: 0.08em; font-size: 13px; color: var(--muted-ink); margin: 0 0 20px; }
 
       /* ---------- Profile ---------- */
+      .page-profile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .page-profile.profile-view {
+        align-items: stretch;
+      }
       .profile-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+      .login-layout {
+        width: min(100%, 420px);
+        grid-template-columns: 1fr;
+        justify-items: center;
+      }
+      .login-card {
+        width: 100%;
+      }
       .profile-card {
         background: var(--paper);
         color: var(--ink);

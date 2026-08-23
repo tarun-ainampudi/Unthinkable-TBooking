@@ -2,8 +2,12 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +47,23 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func loginTestUser(router *chi.Mux) string {
+	body := `{"email":"aarav.shah@example.com","password":"ticket123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		panic("failed to create authenticated test session: " + rr.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		panic("failed to parse login response: " + err.Error())
+	}
+	return payload["sessionToken"].(string)
+}
+
 // setupTestRouter creates a chi router with all routes mapped to our handlers
 func setupTestRouter() *chi.Mux {
 	r := chi.NewRouter()
@@ -51,8 +72,13 @@ func setupTestRouter() *chi.Mux {
 	r.Get("/api/events", h.GetEvents)
 	r.Get("/api/events/{id}/seats", h.GetEventSeats)
 	r.Get("/api/pricing", h.GetCategoryMeta)
+	r.Get("/api/session", h.GetSession)
 	r.Get("/api/users/{id}", h.GetUser)
 	r.Get("/api/users/{id}/bookings", h.GetUserBookings)
+	r.Post("/api/login", h.Login)
+	r.Post("/api/logout", h.Logout)
+	r.Post("/api/seats/hold", h.HoldSeats)
+	r.Delete("/api/seats/hold", h.ReleaseHeldSeats)
 	r.Post("/api/bookings", h.CreateBooking)
 
 	return r

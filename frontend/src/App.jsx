@@ -10,6 +10,7 @@ import BookingsPage from "./pages/BookingsPage";
 import { apiFetch } from "./api";
 
 const HOLD_SECONDS = 8 * 60;
+const SESSION_KEY = "ticket_session_token";
 
 export default function App() {
   const [page, setPage] = useState("events");
@@ -19,31 +20,115 @@ export default function App() {
   const [bookings, setBookings] = useState([]);
   const [lastBooking, setLastBooking] = useState(null);
   const [user, setUser] = useState(null);
+  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(SESSION_KEY) || "");
   const [bookingError, setBookingError] = useState("");
   const [holdDeadline, setHoldDeadline] = useState(null);
 
+  const requestWithSession = (path, options = {}) => {
+    const headers = {
+      ...(options.headers || {}),
+    };
+
+    if (sessionToken) {
+      headers.Authorization = `Bearer ${sessionToken}`;
+    }
+
+    return apiFetch(path, {
+      ...options,
+      headers,
+    });
+  };
+
+  const loadBookings = async () => {
+    if (!user || !sessionToken) {
+      setBookings([]);
+      return;
+    }
+
+    try {
+      const items = await requestWithSession(`/api/users/${user.id}/bookings`);
+      setBookings(items || []);
+    } catch (error) {
+      console.error("Failed to load bookings", error);
+      setBookings([]);
+    }
+  };
+
   useEffect(() => {
-    const loadUser = async () => {
+    const loadSession = async () => {
+      if (!sessionToken) {
+        setUser(null);
+        setBookings([]);
+        return;
+      }
+
       try {
-        const profile = await apiFetch("/api/users/1");
-        setUser(profile);
+        const session = await requestWithSession("/api/session");
+        setUser(session?.user || null);
+        if (!session?.user) {
+          localStorage.removeItem(SESSION_KEY);
+          setSessionToken("");
+        }
       } catch (error) {
-        console.error("Failed to load user profile", error);
+        localStorage.removeItem(SESSION_KEY);
+        setSessionToken("");
+        setUser(null);
       }
     };
 
-    const loadBookings = async () => {
-      try {
-        const items = await apiFetch("/api/users/1/bookings");
-        setBookings(items || []);
-      } catch (error) {
-        console.error("Failed to load bookings", error);
-      }
-    };
+    loadSession();
+  }, [sessionToken]);
 
-    loadUser();
-    loadBookings();
-  }, []);
+  useEffect(() => {
+    if (user && sessionToken) {
+      loadBookings();
+    }
+  }, [user, sessionToken]);
+
+  const handleLogin = async ({ email, password }) => {
+    try {
+      const payload = await apiFetch("/api/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+
+      const nextToken = payload.sessionToken;
+      localStorage.setItem(SESSION_KEY, nextToken);
+      setSessionToken(nextToken);
+      setUser(payload.user || null);
+      setPage("profile");
+      return payload;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (sessionToken) {
+        await requestWithSession("/api/logout", { method: "POST" });
+      }
+    } catch (error) {
+      console.error("Logout failed", error);
+    } finally {
+      localStorage.removeItem(SESSION_KEY);
+      setSessionToken("");
+      setUser(null);
+      setBookings([]);
+      setSelectedSeats([]);
+      setHoldDeadline(null);
+      setPage("profile");
+    }
+  };
+
+  const requireLogin = (nextPage = "profile") => {
+    if (!sessionToken || !user) {
+      setPage("profile");
+      return false;
+    }
+    if (nextPage) setPage(nextPage);
+    return true;
+  };
 
   async function loadSeatsForEvent(event) {
     try {
@@ -64,6 +149,7 @@ export default function App() {
   }
 
   async function goToSeats(event) {
+    if (!requireLogin()) return;
     setSelectedEvent(event);
     setSelectedSeats([]);
     setBookingError("");
@@ -73,16 +159,17 @@ export default function App() {
   }
 
   async function goToPayment() {
+    if (!requireLogin()) return;
     setBookingError("");
     if (!selectedEvent || selectedSeats.length === 0) return;
 
     try {
       const payload = {
-        userId: 1,
+        userId: user.id,
         eventId: Number(selectedEvent.id),
         seatLabels: selectedSeats.slice().sort(),
       };
-      await apiFetch("/api/seats/hold", {
+      await requestWithSession("/api/seats/hold", {
         method: "POST",
         body: JSON.stringify(payload),
       });
@@ -98,10 +185,10 @@ export default function App() {
     if (!selectedEvent || selectedSeats.length === 0) return;
 
     try {
-      await apiFetch("/api/seats/hold", {
+      await requestWithSession("/api/seats/hold", {
         method: "DELETE",
         body: JSON.stringify({
-          userId: 1,
+          userId: user?.id || 1,
           eventId: Number(selectedEvent.id),
           seatLabels: selectedSeats.slice().sort(),
         }),
@@ -122,10 +209,10 @@ export default function App() {
 
     try {
       setBookingError("");
-      const response = await apiFetch("/api/bookings", {
+      const response = await requestWithSession("/api/bookings", {
         method: "POST",
         body: JSON.stringify({
-          userId: 1,
+          userId: user.id,
           eventId: Number(selectedEvent.id),
           seatLabels,
         }),
@@ -159,7 +246,7 @@ export default function App() {
   return (
     <div className="app-root">
       <GlobalStyles />
-      <TopNav page={page} setPage={setPage} />
+      <TopNav page={page} setPage={setPage} user={user} onEventsClick={() => setPage("events")} onBookingsClick={() => (user ? setPage("bookings") : setPage("profile"))} />
       <main className="app-main">
         {page === "events" && <EventSelectionPage onSelect={goToSeats} />}
 
@@ -188,12 +275,12 @@ export default function App() {
         )}
 
         {page === "confirmation" && lastBooking && (
-          <ConfirmationPage booking={lastBooking} onDone={() => setPage("bookings")} />
+          <ConfirmationPage booking={lastBooking} onDone={() => setPage(user ? "bookings" : "profile")} />
         )}
 
-        {page === "profile" && <ProfilePage user={user} />}
+        {page === "profile" && <ProfilePage user={user} onLogin={handleLogin} onLogout={handleLogout} />}
 
-        {page === "bookings" && <BookingsPage bookings={bookings} />}
+        {page === "bookings" && <BookingsPage bookings={bookings} user={user} onRequireLogin={() => setPage("profile")} />}
       </main>
     </div>
   );
