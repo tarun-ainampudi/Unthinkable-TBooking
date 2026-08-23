@@ -24,15 +24,16 @@ type Seat struct {
 }
 
 type Booking struct {
-	ID         string   `json:"id"`
-	EventTitle string   `json:"eventTitle"`
-	Venue      string   `json:"venue"`
-	Date       string   `json:"date"`
-	Time       string   `json:"time"`
-	SeatLabels []string `json:"seatLabels"`
-	Total      float64  `json:"total"`
-	Status     string   `json:"status"`
-	Code       string   `json:"code"`
+	ID             string   `json:"id"`
+	EventTitle     string   `json:"eventTitle"`
+	Venue          string   `json:"venue"`
+	Date           string   `json:"date"`
+	Time           string   `json:"time"`
+	SeatLabels     []string `json:"seatLabels"`
+	Total          float64  `json:"total"`
+	Status         string   `json:"status"`
+	Code           string   `json:"code"`
+	QRCodeDataUrl  string   `json:"qrCodeDataUrl,omitempty"`
 }
 
 type User struct {

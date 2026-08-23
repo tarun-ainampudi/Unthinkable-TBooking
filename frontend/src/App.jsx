@@ -9,6 +9,8 @@ import ProfilePage from "./pages/ProfilePage";
 import BookingsPage from "./pages/BookingsPage";
 import { apiFetch } from "./api";
 
+const HOLD_SECONDS = 8 * 60;
+
 export default function App() {
   const [page, setPage] = useState("events");
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -18,6 +20,7 @@ export default function App() {
   const [lastBooking, setLastBooking] = useState(null);
   const [user, setUser] = useState(null);
   const [bookingError, setBookingError] = useState("");
+  const [holdDeadline, setHoldDeadline] = useState(null);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -69,9 +72,26 @@ export default function App() {
     setPage("seats");
   }
 
-  function goToPayment() {
+  async function goToPayment() {
     setBookingError("");
-    setPage("payment");
+    if (!selectedEvent || selectedSeats.length === 0) return;
+
+    try {
+      const payload = {
+        userId: 1,
+        eventId: Number(selectedEvent.id),
+        seatLabels: selectedSeats.slice().sort(),
+      };
+      await apiFetch("/api/seats/hold", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setHoldDeadline(Date.now() + HOLD_SECONDS * 1000);
+      setPage("payment");
+    } catch (error) {
+      setBookingError(error.message || "Seats could not be held. Please try again.");
+      setPage("seats");
+    }
   }
 
   async function confirmBooking() {
@@ -99,11 +119,14 @@ export default function App() {
         total: Number(response.total || 0),
         status: "upcoming",
         code: response.bookingCode || "BK-BOOKED",
+        email: response.email || user?.email || "aarav.shah@example.com",
+        qrCodeDataUrl: response.qrCodeDataUrl || null,
       };
 
       setBookings((prev) => [booking, ...prev]);
       setLastBooking(booking);
       setSelectedSeats([]);
+      setHoldDeadline(null);
       setPage("confirmation");
     } catch (error) {
       setBookingError(error.message || "Booking failed. Please try again.");
@@ -134,6 +157,8 @@ export default function App() {
             event={selectedEvent}
             seats={seats}
             selectedSeats={selectedSeats}
+            holdDeadline={holdDeadline}
+            user={user}
             onBack={() => setPage("seats")}
             onPay={confirmBooking}
             bookingError={bookingError}

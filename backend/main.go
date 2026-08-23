@@ -14,11 +14,10 @@ import (
 
 func main() {
 
-	// Load environment variables from .env file
-	err := godotenv.Load()
-    if err != nil {
-        log.Fatal("[Error] Error loading .env file")
-    }
+	// Load environment variables from .env file when present.
+	if err := godotenv.Load(); err != nil {
+		log.Println("[Info] No .env file found; using environment variables or defaults.")
+	}
 
 	// Initialize Database
 	db := database.InitDB()
@@ -53,6 +52,7 @@ func main() {
 	r.Get("/api/pricing", h.GetCategoryMeta)
 	r.Get("/api/users/{id}", h.GetUser)
 	r.Get("/api/users/{id}/bookings", h.GetUserBookings)
+	r.Post("/api/seats/hold", h.HoldSeats)
 	r.Post("/api/bookings", h.CreateBooking)
 
 	// Start Server

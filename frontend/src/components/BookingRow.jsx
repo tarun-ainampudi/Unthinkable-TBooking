@@ -42,7 +42,11 @@ export default function BookingRow({ booking }) {
         <>
           <div className="stub-divider stub-divider-dashed" />
           <div className="booking-row-footer">
-            <QRPlaceholder seed={booking.code} />
+            {booking.qrCodeDataUrl ? (
+              <img src={booking.qrCodeDataUrl} alt="Booking QR code" style={{ width: 72, height: 72, background: "#fff", padding: 6, borderRadius: 10, objectFit: "contain" }} />
+            ) : (
+              <QRPlaceholder seed={booking.code} />
+            )}
             <button className="btn btn-secondary">
               <Download size={14} strokeWidth={2.25} /> Download ticket
             </button>

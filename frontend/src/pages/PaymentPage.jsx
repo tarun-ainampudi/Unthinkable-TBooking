@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ArrowLeft, CreditCard, Smartphone, ShieldCheck, MapPin, Calendar, Clock } from "lucide-react";
-import { formatDate, formatINR } from "../utils";
+import { formatDate, formatINR, pad } from "../utils";
 
 const CATEGORY_META = {
   VIP: { label: "VIP", price: 2499, color: "var(--gold)" },
@@ -8,11 +8,28 @@ const CATEGORY_META = {
   Standard: { label: "Standard", price: 899, color: "var(--paper-dim)" },
 };
 
-export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay, bookingError }) {
+export default function PaymentPage({ event, seats, selectedSeats, holdDeadline, user, onBack, onPay, bookingError }) {
   const [method, setMethod] = useState("card");
   const [processing, setProcessing] = useState(false);
   const [card, setCard] = useState({ number: "", name: "", expiry: "", cvv: "" });
   const [upi, setUpi] = useState("");
+  const [secondsLeft, setSecondsLeft] = useState(holdDeadline ? Math.max(0, Math.ceil((holdDeadline - Date.now()) / 1000)) : 0);
+
+  useEffect(() => {
+    if (!holdDeadline) {
+      setSecondsLeft(0);
+      return;
+    }
+
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((holdDeadline - Date.now()) / 1000));
+      setSecondsLeft(next);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [holdDeadline]);
 
   const seatDetails = selectedSeats
     .slice()
@@ -28,14 +45,17 @@ export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay
       ? card.number.replace(/\s/g, "").length >= 12 && card.name.trim() && card.expiry.length >= 4 && card.cvv.length >= 3
       : upi.includes("@") && upi.length > 4;
 
-  function handlePay(e) {
+  const expired = secondsLeft <= 0;
+
+  async function handlePay(e) {
     e.preventDefault();
-    if (!canPay || processing) return;
+    if (!canPay || processing || expired) return;
     setProcessing(true);
-    setTimeout(() => {
+    try {
+      await onPay();
+    } finally {
       setProcessing(false);
-      onPay();
-    }, 1100);
+    }
   }
 
   return (
@@ -130,14 +150,20 @@ export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay
             </div>
           )}
 
-          <div className="secure-note">
-            <ShieldCheck size={15} strokeWidth={2.25} /> This is a prototype form — no real payment is processed.
+          <div className="secure-note" style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+            <span><ShieldCheck size={15} strokeWidth={2.25} /> This is a prototype form — no real payment is processed.</span>
+            {holdDeadline && (
+              <span className={"hold-timer" + (expired ? " is-expired" : "")} style={{ marginLeft: "auto" }}>
+                <span className="hold-timer-label">{expired ? "Hold expired" : "Hold ends"}</span>
+                <span className="hold-timer-clock">{pad(Math.floor(secondsLeft / 60))}:{pad(secondsLeft % 60)}</span>
+              </span>
+            )}
           </div>
 
           {bookingError && <p className="field-hint" style={{ color: "#b42318" }}>{bookingError}</p>}
 
-          <button className="btn btn-primary btn-block" type="submit" disabled={!canPay || processing}>
-            {processing ? "Processing…" : `Pay ${formatINR(total)}`}
+          <button className="btn btn-primary btn-block" type="submit" disabled={!canPay || processing || expired}>
+            {processing ? "Processing…" : expired ? "Hold expired" : `Pay ${formatINR(total)}`}
           </button>
         </form>
 

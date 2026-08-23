@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { ArrowLeft, MapPin, Calendar, Clock, ChevronRight, Armchair } from "lucide-react";
-import { formatDate, formatINR, pad } from "../utils";
+import { formatDate, formatINR } from "../utils";
 import SeatButton from "../components/SeatButton";
 
 const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -14,19 +14,6 @@ const HOLD_SECONDS = 8 * 60;
 const MAX_SEATS = 8;
 
 export default function SeatSelectionPage({ event, seats, selectedSeats, setSelectedSeats, onBack, onContinue }) {
-  const [secondsLeft, setSecondsLeft] = useState(HOLD_SECONDS);
-
-  useEffect(() => {
-    if (selectedSeats.length === 0) {
-      setSecondsLeft(HOLD_SECONDS);
-      return;
-    }
-    const timer = setInterval(() => {
-      setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [selectedSeats.length > 0]);
-
   function toggleSeat(seat) {
     if (seat.status !== "available") return;
     setSelectedSeats((prev) => {
@@ -44,7 +31,6 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
   }, 0);
 
   const grouped = ROWS.map((row) => seats.filter((s) => s.row === row)).filter((rowSeats) => rowSeats.length > 0);
-  const expired = selectedSeats.length > 0 && secondsLeft === 0;
 
   return (
     <div className="page page-seats">
@@ -61,16 +47,6 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
             <Clock size={13} strokeWidth={2.25} /> {event.time}
           </p>
         </div>
-        {selectedSeats.length > 0 && (
-          <div className={"hold-timer" + (expired ? " is-expired" : "")}>
-            <span className="hold-timer-label">
-              {expired ? "Hold expired" : "Seats held for"}
-            </span>
-            <span className="hold-timer-clock">
-              {pad(Math.floor(secondsLeft / 60))}:{pad(secondsLeft % 60)}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="seat-layout">
@@ -147,7 +123,7 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
           </div>
           <button
             className="btn btn-primary btn-block"
-            disabled={selectedSeats.length === 0 || expired || grouped.length === 0}
+            disabled={selectedSeats.length === 0 || grouped.length === 0}
             onClick={onContinue}
           >
             Continue to payment <ChevronRight size={16} strokeWidth={2.5} />

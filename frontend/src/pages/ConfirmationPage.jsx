@@ -12,7 +12,7 @@ export default function ConfirmationPage({ booking, onDone }) {
         </div>
         <h1>Booking confirmed</h1>
         <p className="confirmation-sub">
-          A copy of this ticket and QR code has been emailed to you.
+          A copy of this ticket and QR code has been emailed to {booking.email || "your inbox"}.
         </p>
         <div className="stub-divider stub-divider-dashed" />
         <h3>{booking.eventTitle}</h3>
@@ -27,7 +27,11 @@ export default function ConfirmationPage({ booking, onDone }) {
           <Armchair size={13} strokeWidth={2.25} /> Seats {booking.seatLabels.join(", ")}
         </p>
         <div className="stub-divider stub-divider-dashed" />
-        <QRPlaceholder seed={booking.code} />
+        {booking.qrCodeDataUrl ? (
+          <img src={booking.qrCodeDataUrl} alt="Booking QR code" style={{ width: 180, height: 180, margin: "8px auto 12px", display: "block", background: "#fff", padding: 8, borderRadius: 12 }} />
+        ) : (
+          <QRPlaceholder seed={booking.code} />
+        )}
         <p className="booking-code">{booking.code}</p>
         <button className="btn btn-primary btn-block" onClick={onDone}>
           View my bookings

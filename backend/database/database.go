@@ -13,7 +13,7 @@ import (
 func InitDB() *pgxpool.Pool {
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
-		log.Fatal("[Error] DATABASE_URL environment variable is missing")
+		log.Println("[Info] DATABASE_URL not set; using local fallback connection string.")
 	}
 
 	ctx := context.Background()
@@ -125,6 +125,7 @@ func EnsureSchema(ctx context.Context, db *pgxpool.Pool) error {
 			category TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'available',
 			price NUMERIC(10,2) NOT NULL DEFAULT 0,
+			held_until TIMESTAMPTZ,
 			PRIMARY KEY (event_id, seat_label),
 			CONSTRAINT fk_seats_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 		)`,
@@ -136,13 +137,16 @@ func EnsureSchema(ctx context.Context, db *pgxpool.Pool) error {
 			total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'completed',
 			booking_code TEXT NOT NULL,
+			qr_code_data_url TEXT,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			CONSTRAINT fk_bookings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
 			CONSTRAINT fk_bookings_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 		)`,
+		`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS qr_code_data_url TEXT`,
 		`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`,
 		`CREATE INDEX IF NOT EXISTS idx_seats_event_status ON seats(event_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_bookings_user_event ON bookings(user_id, event_id)`,
+		`ALTER TABLE seats ADD COLUMN IF NOT EXISTS held_until TIMESTAMPTZ`,
 	}
 
 	for _, query := range queries {
@@ -161,13 +165,13 @@ func SeedDB(db *pgxpool.Pool) {
 		return
 	}
 
-	// 1. Seed User
-	_, _ = db.Exec(ctx, `
+	if _, err := db.Exec(ctx, `
 		INSERT INTO users (id, name, email, phone, member_since) 
 		VALUES (1, 'Aarav Shah', 'aarav.shah@example.com', '+91 98765 43210', 'March 2025')
-		ON CONFLICT (id) DO NOTHING`)
+		ON CONFLICT (id) DO NOTHING`); err != nil {
+		log.Printf("[Warn] Failed to seed default user: %v", err)
+	}
 
-	// 2. Seed Events
 	events := []models.Event{
 		{ID: 1, Title: "Midnight Frequencies", Category: "Concert", Tag: "Electronic", Venue: "Marquee Arena, Amaravati", Date: "2026-09-12", Time: "8:00 PM", PriceFrom: 899, Rating: 4.8, Accent: "gold", Blurb: "A night-long set from three touring electronic acts, built for a room that likes its bass loud."},
 		{ID: 2, Title: "The Glass Menagerie", Category: "Theatre", Tag: "Drama", Venue: "Riverside Playhouse", Date: "2026-09-18", Time: "7:00 PM", PriceFrom: 499, Rating: 4.6, Accent: "teal", Blurb: "Tennessee Williams' family drama, staged in the round by the Riverside repertory company."},
@@ -178,56 +182,68 @@ func SeedDB(db *pgxpool.Pool) {
 	}
 
 	for _, ev := range events {
-		_, _ = db.Exec(ctx, `
+		if _, err := db.Exec(ctx, `
 			INSERT INTO events (id, title, category, tag, venue, event_date, event_time, price_from, rating, accent, blurb)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (id) DO NOTHING`,
-			ev.ID, ev.Title, ev.Category, ev.Tag, ev.Venue, ev.Date, ev.Time, ev.PriceFrom, ev.Rating, ev.Accent, ev.Blurb)
+			ev.ID, ev.Title, ev.Category, ev.Tag, ev.Venue, ev.Date, ev.Time, ev.PriceFrom, ev.Rating, ev.Accent, ev.Blurb); err != nil {
+			log.Printf("[Warn] Failed to seed event %d: %v", ev.ID, err)
+		}
 	}
 
-	// 3. Seed Seats
-	rows := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
-	cols := 12
-	bookedSeats := map[string]bool{"A3": true, "A4": true, "B7": true, "B8": true, "C1": true, "C12": true, "D5": true, "D6": true, "E9": true, "F2": true, "F3": true, "G10": true, "G11": true, "H4": true, "H5": true, "H6": true, "A9": true, "B2": true}
-	heldSeats := map[string]bool{"C5": true, "C6": true, "D9": true, "F8": true}
+	var existingSeatCount int
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM seats`).Scan(&existingSeatCount); err != nil {
+		log.Printf("[Warn] Unable to count existing seats before seeding: %v", err)
+		existingSeatCount = 0
+	}
 
-	for _, ev := range events {
-		for _, row := range rows {
-			for c := 1; c <= cols; c++ {
-				seatLabel := fmt.Sprintf("%s%d", row, c)
-				category := "Standard"
-				price := 899.0
-				if row == "A" || row == "B" {
-					category = "VIP"
-					price = 2499.0
-				} else if row == "C" || row == "D" || row == "E" {
-					category = "Premium"
-					price = 1499.0
-				}
+	if existingSeatCount == 0 {
+		rows := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+		cols := 12
+		bookedSeats := map[string]bool{"A3": true, "A4": true, "B7": true, "B8": true, "C1": true, "C12": true, "D5": true, "D6": true, "E9": true, "F2": true, "F3": true, "G10": true, "G11": true, "H4": true, "H5": true, "H6": true, "A9": true, "B2": true}
+		heldSeats := map[string]bool{"C5": true, "C6": true, "D9": true, "F8": true}
 
-				status := "available"
-				if ev.ID == 1 { // Apply mock booked/held seats to Event 1 for demonstration
-					if bookedSeats[seatLabel] {
-						status = "booked"
-					} else if heldSeats[seatLabel] {
-						status = "held"
+		for _, ev := range events {
+			for _, row := range rows {
+				for c := 1; c <= cols; c++ {
+					seatLabel := fmt.Sprintf("%s%d", row, c)
+					category := "Standard"
+					price := 899.0
+					if row == "A" || row == "B" {
+						category = "VIP"
+						price = 2499.0
+					} else if row == "C" || row == "D" || row == "E" {
+						category = "Premium"
+						price = 1499.0
+					}
+
+					status := "available"
+					if ev.ID == 1 {
+						if bookedSeats[seatLabel] {
+							status = "booked"
+						} else if heldSeats[seatLabel] {
+							status = "held"
+						}
+					}
+
+					if _, err := db.Exec(ctx, `
+						INSERT INTO seats (event_id, seat_label, row_name, col_num, category, status, price, held_until)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+						ON CONFLICT (event_id, seat_label) DO NOTHING`,
+						ev.ID, seatLabel, row, c, category, status, price); err != nil {
+						log.Printf("[Warn] Failed to seed seat %s for event %d: %v", seatLabel, ev.ID, err)
 					}
 				}
-
-				_, _ = db.Exec(ctx, `
-					INSERT INTO seats (event_id, seat_label, row_name, col_num, category, status, price)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)
-					ON CONFLICT (event_id, seat_label) DO NOTHING`,
-					ev.ID, seatLabel, row, c, category, status, price)
 			}
 		}
 	}
 
-	// 4. Seed Past Booking
-	_, _ = db.Exec(ctx, `
+	if _, err := db.Exec(ctx, `
 		INSERT INTO bookings (id, user_id, event_id, seat_labels, total_amount, status, booking_code, created_at)
 		VALUES ('bk_9021', 1, 1, '["D5", "D6"]', 2998, 'completed', 'WL-9021-XQ', '2026-06-14 20:00:00')
-		ON CONFLICT (id) DO NOTHING`)
+		ON CONFLICT (id) DO NOTHING`); err != nil {
+		log.Printf("[Warn] Failed to seed past booking: %v", err)
+	}
 
 	log.Println("[Info] Database seeded with mock data successfully!")
 }

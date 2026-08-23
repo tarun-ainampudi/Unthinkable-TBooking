@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
-	"log"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/skip2/go-qrcode"
 	"unthinkable-tbooking-backend/models"
 )
 
@@ -19,6 +22,20 @@ type Handler struct {
 
 func NewHandler(db *pgxpool.Pool) *Handler {
 	return &Handler{DB: db}
+}
+
+func generateTicketQRCode(bookingCode string) string {
+	png, err := qrcode.Encode(bookingCode, qrcode.Medium, 256)
+	if err != nil {
+		log.Printf("[Warn] QR generation failed for %s: %v", bookingCode, err)
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+}
+
+func simulateBookingEmail(recipient, bookingCode, qrDataURL string) error {
+	log.Printf("[Info] Sending ticket email to %s for booking %s (QR length=%d)", recipient, bookingCode, len(qrDataURL))
+	return nil
 }
 
 func (h *Handler) GetEvents(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +106,7 @@ func (h *Handler) GetUserBookings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := h.DB.Query(ctx, `
-		SELECT b.id, e.title, e.venue, e.event_date, e.event_time, b.seat_labels, b.total_amount, b.status, b.booking_code
+		SELECT b.id, e.title, e.venue, e.event_date, e.event_time, b.seat_labels, b.total_amount, b.status, b.booking_code, COALESCE(b.qr_code_data_url, '')
 		FROM bookings b
 		JOIN events e ON b.event_id = e.id
 		WHERE b.user_id = $1
@@ -104,13 +121,79 @@ func (h *Handler) GetUserBookings(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var b models.Booking
 		var seatLabelsJSON []byte
-		rows.Scan(&b.ID, &b.EventTitle, &b.Venue, &b.Date, &b.Time, &seatLabelsJSON, &b.Total, &b.Status, &b.Code)
+		var qrCodeDataURL string
+		rows.Scan(&b.ID, &b.EventTitle, &b.Venue, &b.Date, &b.Time, &seatLabelsJSON, &b.Total, &b.Status, &b.Code, &qrCodeDataURL)
 		json.Unmarshal(seatLabelsJSON, &b.SeatLabels)
+		b.QRCodeDataUrl = qrCodeDataURL
 		bookings = append(bookings, b)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(bookings)
+}
+
+func (h *Handler) HoldSeats(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID     int      `json:"userId"`
+		EventID    int      `json:"eventId"`
+		SeatLabels []string `json:"seatLabels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.SeatLabels) == 0 {
+		http.Error(w, `{"error": "No seats selected"}`, http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to start transaction"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var totalAmount float64
+	for _, seatLabel := range req.SeatLabels {
+		var status string
+		var price float64
+		err = tx.QueryRow(ctx, `SELECT status, price FROM seats WHERE event_id = $1 AND seat_label = $2`, req.EventID, seatLabel).Scan(&status, &price)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, fmt.Sprintf(`{"error": "Seat %s does not exist"}`, seatLabel), http.StatusConflict)
+				return
+			}
+			http.Error(w, `{"error": "Database error while checking seat availability"}`, http.StatusInternalServerError)
+			return
+		}
+		if status == "booked" || status == "held" {
+			http.Error(w, fmt.Sprintf(`{"error": "Seat %s is already held or booked"}`, seatLabel), http.StatusConflict)
+			return
+		}
+		_, err = tx.Exec(ctx, `UPDATE seats SET status = 'held', held_until = NOW() + INTERVAL '8 minutes' WHERE event_id = $1 AND seat_label = $2 AND status IN ('available', 'held')`, req.EventID, seatLabel)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to hold seat %s"}`, seatLabel), http.StatusInternalServerError)
+			return
+		}
+		totalAmount += price
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		http.Error(w, `{"error": "Failed to reserve seats"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"eventId":       req.EventID,
+		"seatLabels":    req.SeatLabels,
+		"total":         totalAmount,
+		"expiresInSec":  480,
+	})
 }
 
 func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
@@ -135,21 +218,28 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Failed to start transaction"}`, http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback(ctx) // Safe to call even after Commit
+	defer tx.Rollback(ctx)
 
 	var totalAmount float64
 	for _, seatLabel := range req.SeatLabels {
 		var price float64
-		// Check if seat exists and is available
-		err = tx.QueryRow(ctx, `SELECT price FROM seats WHERE event_id = $1 AND seat_label = $2 AND status = 'available'`, req.EventID, seatLabel).Scan(&price)
+		var status string
+		err = tx.QueryRow(ctx, `SELECT status, price FROM seats WHERE event_id = $1 AND seat_label = $2`, req.EventID, seatLabel).Scan(&status, &price)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error": "Seat %s is not available or does not exist"}`, seatLabel), http.StatusConflict)
+			if err == sql.ErrNoRows {
+				http.Error(w, fmt.Sprintf(`{"error": "Seat %s does not exist"}`, seatLabel), http.StatusConflict)
+				return
+			}
+			http.Error(w, `{"error": "Database error while checking seat status"}`, http.StatusInternalServerError)
+			return
+		}
+		if status != "available" && status != "held" {
+			http.Error(w, fmt.Sprintf(`{"error": "Seat %s is no longer available"}`, seatLabel), http.StatusConflict)
 			return
 		}
 		totalAmount += price
 
-		// Update seat status
-		_, err = tx.Exec(ctx, `UPDATE seats SET status = 'booked' WHERE event_id = $1 AND seat_label = $2`, req.EventID, seatLabel)
+		_, err = tx.Exec(ctx, `UPDATE seats SET status = 'booked', held_until = NULL WHERE event_id = $1 AND seat_label = $2`, req.EventID, seatLabel)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error": "Failed to update seat %s"}`, seatLabel), http.StatusInternalServerError)
 			return
@@ -159,14 +249,28 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	bookingID := fmt.Sprintf("bk_%d", time.Now().Unix())
 	bookingCode := fmt.Sprintf("BK-%d-%s", req.EventID, strconv.FormatInt(time.Now().UnixNano()%10000, 10))
 	seatLabelsJSON, _ := json.Marshal(req.SeatLabels)
+	qrCodeDataURL := generateTicketQRCode(bookingCode)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO bookings (id, user_id, event_id, seat_labels, total_amount, status, booking_code, created_at)
-		VALUES ($1, $2, $3, $4, $5, 'completed', $6, NOW())`,
-		bookingID, req.UserID, req.EventID, seatLabelsJSON, totalAmount, bookingCode)
+		INSERT INTO bookings (id, user_id, event_id, seat_labels, total_amount, status, booking_code, qr_code_data_url, created_at)
+		VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, NOW())`,
+		bookingID, req.UserID, req.EventID, seatLabelsJSON, totalAmount, bookingCode, qrCodeDataURL)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to create booking record"}`, http.StatusInternalServerError)
 		return
+	}
+
+	var recipientEmail string
+	err = h.DB.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, req.UserID).Scan(&recipientEmail)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("[Warn] Unable to fetch email for user %d: %v", req.UserID, err)
+	}
+	if recipientEmail == "" {
+		recipientEmail = "guest@example.com"
+	}
+
+	if err := simulateBookingEmail(recipientEmail, bookingCode, qrCodeDataURL); err != nil {
+		log.Printf("[Warn] Ticket email simulation failed: %v", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
@@ -177,10 +281,12 @@ func (h *Handler) CreateBooking(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":     true,
-		"bookingId":   bookingID,
-		"bookingCode": bookingCode,
-		"total":       totalAmount,
+		"success":         true,
+		"bookingId":       bookingID,
+		"bookingCode":     bookingCode,
+		"total":           totalAmount,
+		"qrCodeDataUrl":   qrCodeDataURL,
+		"email":           recipientEmail,
 	})
 }
 
