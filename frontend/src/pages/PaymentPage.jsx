@@ -8,6 +8,52 @@ const CATEGORY_META = {
   Standard: { label: "Standard", price: 899, color: "var(--paper-dim)" },
 };
 
+function formatSeatSummary(seats) {
+  if (!seats || seats.length === 0) return "None selected";
+
+  const sorted = [...seats].sort((a, b) => {
+    const ra = a.match(/([A-Z]+)(\d+)/);
+    const rb = b.match(/([A-Z]+)(\d+)/);
+    const rowDiff = ra[1].localeCompare(rb[1]);
+    if (rowDiff !== 0) return rowDiff;
+    return Number(ra[2]) - Number(rb[2]);
+  });
+
+  const groups = [];
+  let current = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prev = current[current.length - 1];
+    const prevMatch = prev.match(/([A-Z]+)(\d+)/);
+    const currentMatch = sorted[i].match(/([A-Z]+)(\d+)/);
+    const prevRow = prevMatch[1];
+    const prevNum = Number(prevMatch[2]);
+    const currRow = currentMatch[1];
+    const currNum = Number(currentMatch[2]);
+
+    if (prevRow === currRow && currNum === prevNum + 1) {
+      current.push(sorted[i]);
+      continue;
+    }
+
+    groups.push(current);
+    current = [sorted[i]];
+  }
+  groups.push(current);
+
+  return groups
+    .map((group) => {
+      const start = group[0];
+      const end = group[group.length - 1];
+      if (group.length === 1) return start;
+      const startMatch = start.match(/([A-Z]+)(\d+)/);
+      const endMatch = end.match(/([A-Z]+)(\d+)/);
+      if (startMatch[1] === endMatch[1]) return `${startMatch[1]}${startMatch[2]}-${endMatch[2]}`;
+      return `${start}-${end}`;
+    })
+    .join(", ");
+}
+
 export default function PaymentPage({ event, seats, selectedSeats, holdDeadline, user, onBack, onPay, bookingError }) {
   const [method, setMethod] = useState("card");
   const [processing, setProcessing] = useState(false);
@@ -177,6 +223,10 @@ export default function PaymentPage({ event, seats, selectedSeats, holdDeadline,
             <Clock size={13} strokeWidth={2.25} /> {event.time}
           </p>
           <div className="stub-divider stub-divider-dashed" />
+          <div className="summary-seat-list" style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 8, color: "var(--muted)" }}>Selected seats</div>
+            <div style={{ fontWeight: 700, letterSpacing: "0.02em" }}>{formatSeatSummary(selectedSeats)}</div>
+          </div>
           <ul className="summary-seat-list">
             {seatDetails.map((s) => (
               <li key={s.id}>

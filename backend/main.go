@@ -53,6 +53,7 @@ func main() {
 	r.Get("/api/users/{id}", h.GetUser)
 	r.Get("/api/users/{id}/bookings", h.GetUserBookings)
 	r.Post("/api/seats/hold", h.HoldSeats)
+	r.Delete("/api/seats/hold", h.ReleaseHeldSeats)
 	r.Post("/api/bookings", h.CreateBooking)
 
 	// Start Server

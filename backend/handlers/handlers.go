@@ -188,11 +188,57 @@ func (h *Handler) HoldSeats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":       true,
-		"eventId":       req.EventID,
-		"seatLabels":    req.SeatLabels,
-		"total":         totalAmount,
-		"expiresInSec":  480,
+		"success":      true,
+		"eventId":      req.EventID,
+		"seatLabels":   req.SeatLabels,
+		"total":        totalAmount,
+		"expiresInSec": 480,
+	})
+}
+
+func (h *Handler) ReleaseHeldSeats(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID     int      `json:"userId"`
+		EventID    int      `json:"eventId"`
+		SeatLabels []string `json:"seatLabels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.SeatLabels) == 0 {
+		http.Error(w, `{"error": "No seats selected"}`, http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	for _, seatLabel := range req.SeatLabels {
+		var status string
+		err := h.DB.QueryRow(ctx, `SELECT status FROM seats WHERE event_id = $1 AND seat_label = $2`, req.EventID, seatLabel).Scan(&status)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			http.Error(w, `{"error": "Database error while releasing seat hold"}`, http.StatusInternalServerError)
+			return
+		}
+		if status == "booked" {
+			http.Error(w, fmt.Sprintf(`{"error": "Seat %s is already booked and cannot be released"}`, seatLabel), http.StatusConflict)
+			return
+		}
+		_, err = h.DB.Exec(ctx, `UPDATE seats SET status = 'available', held_until = NULL WHERE event_id = $1 AND seat_label = $2 AND status = 'held'`, req.EventID, seatLabel)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error": "Failed to release seat %s"}`, seatLabel), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"eventId":    req.EventID,
+		"seatLabels": req.SeatLabels,
 	})
 }
 

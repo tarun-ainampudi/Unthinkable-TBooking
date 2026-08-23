@@ -94,6 +94,28 @@ export default function App() {
     }
   }
 
+  async function releaseHeldSeats() {
+    if (!selectedEvent || selectedSeats.length === 0) return;
+
+    try {
+      await apiFetch("/api/seats/hold", {
+        method: "DELETE",
+        body: JSON.stringify({
+          userId: 1,
+          eventId: Number(selectedEvent.id),
+          seatLabels: selectedSeats.slice().sort(),
+        }),
+      });
+    } catch (error) {
+      console.error("Failed to release held seats", error);
+    } finally {
+      setSelectedSeats([]);
+      setHoldDeadline(null);
+      await loadSeatsForEvent(selectedEvent);
+      setPage("seats");
+    }
+  }
+
   async function confirmBooking() {
     const seatLabels = selectedSeats.slice().sort();
     if (!selectedEvent || seatLabels.length === 0) return;
@@ -159,7 +181,7 @@ export default function App() {
             selectedSeats={selectedSeats}
             holdDeadline={holdDeadline}
             user={user}
-            onBack={() => setPage("seats")}
+            onBack={releaseHeldSeats}
             onPay={confirmBooking}
             bookingError={bookingError}
           />
