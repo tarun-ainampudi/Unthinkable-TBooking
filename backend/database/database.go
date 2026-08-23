@@ -34,6 +34,10 @@ func InitDB() *pgxpool.Pool {
 	}
 
 	if err == nil {
+		if err := EnsureSchema(ctx, db); err != nil {
+			db.Close()
+			log.Fatalf("[Error] Unable to initialize database schema: %v", err)
+		}
 		log.Println("[Info] Connected to PostgreSQL successfully!")
 		return db
 	}
@@ -81,13 +85,81 @@ func InitDB() *pgxpool.Pool {
 		log.Fatalf("[Error] Unable to ping newly created database: %v", err)
 	}
 
+	if err := EnsureSchema(ctx, db); err != nil {
+		db.Close()
+		log.Fatalf("[Error] Unable to initialize database schema after creating database: %v", err)
+	}
+
 	log.Println("[Info] Connected to PostgreSQL successfully!")
 
 	return db
 }
 
+func EnsureSchema(ctx context.Context, db *pgxpool.Pool) error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT NOT NULL UNIQUE,
+			phone TEXT,
+			member_since TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL,
+			category TEXT NOT NULL,
+			tag TEXT,
+			venue TEXT NOT NULL,
+			event_date TEXT NOT NULL,
+			event_time TEXT NOT NULL,
+			price_from NUMERIC(10,2) NOT NULL DEFAULT 0,
+			rating NUMERIC(3,1) NOT NULL DEFAULT 0,
+			accent TEXT,
+			blurb TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS seats (
+			event_id INTEGER NOT NULL,
+			seat_label TEXT NOT NULL,
+			row_name TEXT NOT NULL,
+			col_num INTEGER NOT NULL,
+			category TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'available',
+			price NUMERIC(10,2) NOT NULL DEFAULT 0,
+			PRIMARY KEY (event_id, seat_label),
+			CONSTRAINT fk_seats_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS bookings (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			event_id INTEGER NOT NULL,
+			seat_labels JSONB NOT NULL,
+			total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'completed',
+			booking_code TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT fk_bookings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			CONSTRAINT fk_bookings_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_category ON events(category)`,
+		`CREATE INDEX IF NOT EXISTS idx_seats_event_status ON seats(event_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_bookings_user_event ON bookings(user_id, event_id)`,
+	}
+
+	for _, query := range queries {
+		if _, err := db.Exec(ctx, query); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func SeedDB(db *pgxpool.Pool) {
 	ctx := context.Background()
+	if err := EnsureSchema(ctx, db); err != nil {
+		log.Printf("[Error] Failed to ensure database schema before seeding: %v", err)
+		return
+	}
 
 	// 1. Seed User
 	_, _ = db.Exec(ctx, `

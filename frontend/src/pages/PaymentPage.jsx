@@ -1,9 +1,14 @@
 import React, { useState } from "react";
 import { ArrowLeft, CreditCard, Smartphone, ShieldCheck, MapPin, Calendar, Clock } from "lucide-react";
-import { CATEGORY_META } from "../data";
 import { formatDate, formatINR } from "../utils";
 
-export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay }) {
+const CATEGORY_META = {
+  VIP: { label: "VIP", price: 2499, color: "var(--gold)" },
+  Premium: { label: "Premium", price: 1499, color: "var(--teal)" },
+  Standard: { label: "Standard", price: 899, color: "var(--paper-dim)" },
+};
+
+export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay, bookingError }) {
   const [method, setMethod] = useState("card");
   const [processing, setProcessing] = useState(false);
   const [card, setCard] = useState({ number: "", name: "", expiry: "", cvv: "" });
@@ -128,6 +133,8 @@ export default function PaymentPage({ event, seats, selectedSeats, onBack, onPay
           <div className="secure-note">
             <ShieldCheck size={15} strokeWidth={2.25} /> This is a prototype form — no real payment is processed.
           </div>
+
+          {bookingError && <p className="field-hint" style={{ color: "#b42318" }}>{bookingError}</p>}
 
           <button className="btn btn-primary btn-block" type="submit" disabled={!canPay || processing}>
             {processing ? "Processing…" : `Pay ${formatINR(total)}`}

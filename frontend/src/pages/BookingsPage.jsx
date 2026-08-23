@@ -2,12 +2,12 @@ import React, { useState } from "react";
 import { TicketX } from "lucide-react";
 import BookingRow from "../components/BookingRow";
 
-export default function BookingsPage({ bookings }) {
+export default function BookingsPage({ bookings = [] }) {
   const [tab, setTab] = useState("all");
 
   const filtered = bookings.filter((b) => {
     if (tab === "all") return true;
-    return b.status === tab;
+    return (b.status || "upcoming").toLowerCase() === tab;
   });
 
   return (

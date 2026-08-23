@@ -15,6 +15,10 @@ var testDB *pgxpool.Pool
 
 // TestMain sets up the test environment before any tests run
 func TestMain(m *testing.M) {
+	if os.Getenv("DATABASE_URL") == "" {
+		_ = os.Setenv("DATABASE_URL", "postgres://tarun:postgres@localhost:5432/ticketdb?sslmode=disable")
+	}
+
 	// 1. Connect to a dedicated test database
 	testDB = database.InitDB()
 

@@ -1,15 +1,33 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Search, TicketX } from "lucide-react";
-import { EVENTS } from "../data";
 import EventCard from "../components/EventCard";
+import { apiFetch } from "../api";
 
 export default function EventSelectionPage({ onSelect }) {
+  const [events, setEvents] = useState([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
 
-  const categories = ["All", ...Array.from(new Set(EVENTS.map((e) => e.category)))];
+  useEffect(() => {
+    const loadEvents = async () => {
+      try {
+        const data = await apiFetch("/api/events");
+        setEvents(data || []);
+      } catch (error) {
+        console.error("Failed to load events", error);
+        setEvents([]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const filtered = EVENTS.filter((e) => {
+    loadEvents();
+  }, []);
+
+  const categories = ["All", ...Array.from(new Set(events.map((e) => e.category)))];
+
+  const filtered = events.filter((e) => {
     const matchesQuery =
       e.title.toLowerCase().includes(query.toLowerCase()) ||
       e.venue.toLowerCase().includes(query.toLowerCase());
@@ -52,10 +70,16 @@ export default function EventSelectionPage({ onSelect }) {
       </section>
 
       <section className="events-grid">
-        {filtered.map((event) => (
-          <EventCard key={event.id} event={event} onSelect={() => onSelect(event)} />
-        ))}
-        {filtered.length === 0 && (
+        {loading ? (
+          <div className="empty-state">
+            <p>Loading events…</p>
+          </div>
+        ) : (
+          filtered.map((event) => (
+            <EventCard key={event.id} event={event} onSelect={() => onSelect(event)} />
+          ))
+        )}
+        {!loading && filtered.length === 0 && (
           <div className="empty-state">
             <TicketX size={28} strokeWidth={1.75} />
             <p>No shows match that search. Try another title or venue.</p>

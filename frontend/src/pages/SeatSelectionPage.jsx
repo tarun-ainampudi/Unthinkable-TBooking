@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, MapPin, Calendar, Clock, ChevronRight, Armchair } from "lucide-react";
-import { ROWS, CATEGORY_META } from "../data";
 import { formatDate, formatINR, pad } from "../utils";
 import SeatButton from "../components/SeatButton";
+
+const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+const CATEGORY_META = {
+  VIP: { label: "VIP", price: 2499, color: "var(--gold)" },
+  Premium: { label: "Premium", price: 1499, color: "var(--teal)" },
+  Standard: { label: "Standard", price: 899, color: "var(--paper-dim)" },
+};
 
 const HOLD_SECONDS = 8 * 60;
 const MAX_SEATS = 8;
@@ -33,10 +39,11 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
 
   const total = selectedSeats.reduce((sum, id) => {
     const seat = seats.find((s) => s.id === id);
+    if (!seat || !CATEGORY_META[seat.category]) return sum;
     return sum + CATEGORY_META[seat.category].price;
   }, 0);
 
-  const grouped = ROWS.map((row) => seats.filter((s) => s.row === row));
+  const grouped = ROWS.map((row) => seats.filter((s) => s.row === row)).filter((rowSeats) => rowSeats.length > 0);
   const expired = selectedSeats.length > 0 && secondsLeft === 0;
 
   return (
@@ -69,25 +76,31 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
       <div className="seat-layout">
         <div className="seat-map-panel">
           <div className="stage">SCREEN / STAGE</div>
-          <div className="seat-grid">
-            {grouped.map((rowSeats) => (
-              <div className="seat-row" key={rowSeats[0].row}>
-                <span className="row-label">{rowSeats[0].row}</span>
-                <div className="seat-row-seats">
-                  {rowSeats.map((seat, idx) => (
-                    <React.Fragment key={seat.id}>
-                      {idx === 7 && <span className="aisle-gap" />}
-                      <SeatButton
-                        seat={seat}
-                        isSelected={selectedSeats.includes(seat.id)}
-                        onClick={() => toggleSeat(seat)}
-                      />
-                    </React.Fragment>
-                  ))}
+          {grouped.length === 0 ? (
+            <div className="empty-state">
+              <p>Seat map is still loading or unavailable for this event.</p>
+            </div>
+          ) : (
+            <div className="seat-grid">
+              {grouped.map((rowSeats) => (
+                <div className="seat-row" key={rowSeats[0].row}>
+                  <span className="row-label">{rowSeats[0].row}</span>
+                  <div className="seat-row-seats">
+                    {rowSeats.map((seat, idx) => (
+                      <React.Fragment key={seat.id}>
+                        {idx === 7 && <span className="aisle-gap" />}
+                        <SeatButton
+                          seat={seat}
+                          isSelected={selectedSeats.includes(seat.id)}
+                          onClick={() => toggleSeat(seat)}
+                        />
+                      </React.Fragment>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="seat-legend">
             {Object.entries(CATEGORY_META).map(([key, meta]) => (
@@ -134,7 +147,7 @@ export default function SeatSelectionPage({ event, seats, selectedSeats, setSele
           </div>
           <button
             className="btn btn-primary btn-block"
-            disabled={selectedSeats.length === 0 || expired}
+            disabled={selectedSeats.length === 0 || expired || grouped.length === 0}
             onClick={onContinue}
           >
             Continue to payment <ChevronRight size={16} strokeWidth={2.5} />
